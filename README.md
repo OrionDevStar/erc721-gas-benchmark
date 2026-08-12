@@ -1,20 +1,23 @@
 # ERC-721 Gas Benchmark
 
-A reproducible benchmark of the storage overhead associated with enumerable ERC-721 implementations commonly used during the 2021 NFT market.
+A reproducible benchmark revisiting a gas-optimization problem I worked on during the 2021 NFT market: reducing the storage overhead of enumerable ERC-721 contracts by using sequential token IDs and deriving enumeration data at read time.
 
-This project revisits an optimization problem I worked on in 2021: NFT contracts frequently inherited OpenZeppelin's `ERC721Enumerable`, which provides convenient on-chain enumeration but requires additional bookkeeping whenever tokens are minted or transferred.
+The benchmark compares a period-appropriate OpenZeppelin `ERC721Enumerable`, a conservative OpenZeppelin sequential control, and a minimal reconstruction of my 2021 `ERC721S` / `ERC721SE` ownership architecture.
 
-My production work at the time explored sequential-token architectures that reduced this storage overhead. This repository isolates that design decision so the gas difference can be measured under the same compiler, optimizer, mint logic, and test environment.
-
-## What is being compared?
+## Implementations
 
 ### `OZEnumerableNFT`
 Uses OpenZeppelin `ERC721Enumerable`, representing the conventional enumerable architecture used by many NFT collections of the period.
 
 ### `OZSequentialNFT`
-Uses the same OpenZeppelin ERC-721 core and the same sequential mint loop, but does **not** inherit `ERC721Enumerable`.
+Uses the same OpenZeppelin ERC-721 core and sequential IDs, but does not inherit `ERC721Enumerable`. This isolates the cost of enumerable bookkeeping.
 
-This is intentionally a conservative control. It does not claim to reproduce every optimization in my original 2021 implementation. Its purpose is to isolate the gas cost of enumerable storage bookkeeping before benchmarking the original sequential architecture separately.
+### `HistoricalERC721S`
+A minimal benchmark adaptation of the sequential ownership architecture used in my verified 2021 production contract.
+
+Its core design stores ownership in an `address[] _owners`, where the array index is the token ID. It does not maintain a separate balance mapping or the usual per-owner/global enumerable token structures. Balance and enumeration information are instead calculated at read time.
+
+Project-specific features from the production contract—payments, metadata/reveal logic, OpenSea proxy integration, meta-transactions, and collection mint rules—are intentionally excluded because they are unrelated to the storage optimization being measured.
 
 ## Environment
 
@@ -35,67 +38,86 @@ forge install OpenZeppelin/openzeppelin-contracts@v4.4.1
 Run:
 
 ```bash
+forge test -vv
 forge test --gas-report
 ```
 
-For a clean comparison, use the same toolchain revision for both implementations.
-
-## Scenarios
-
-| Operation | Enumerable | Sequential |
-| --- | --- | --- |
-| Mint 1 NFT | benchmarked | benchmarked |
-| Mint 5 NFTs | benchmarked | benchmarked |
-| Mint 10 NFTs | benchmarked | benchmarked |
-| Transfer 1 NFT | benchmarked | benchmarked |
-
-The test suite deliberately keeps business logic out of both contracts. There is no whitelist, mint price, royalties, reveal logic, or project-specific code affecting one implementation differently from the other.
-
 ## Results
 
-Initial Foundry benchmark results:
+Results below come from isolated Foundry test scenarios using the same compiler and optimizer configuration.
 
-| Operation | OZ ERC721Enumerable | Sequential ERC721 | Gas saved | Reduction |
+| Operation | OZ Enumerable | OZ Sequential | Historical ERC721S | ERC721S reduction vs Enumerable |
 | --- | ---: | ---: | ---: | ---: |
-| Mint 1 | 130,542 | 98,711 | 31,831 | **24.38%** |
-| Mint 5 | 590,217 | 200,626 | 389,591 | **66.01%** |
-| Mint 10 | 1,164,790 | 327,986 | 836,804 | **71.84%** |
-| `transferFrom` | 65,540 | 57,381 | 8,159 | **12.45%** |
+| Mint 1 | 109,237 | 77,445 | **54,792** | **49.84%** |
+| Mint 5 | 568,912 | 179,366 | **153,680** | **72.99%** |
+| Mint 10 | 1,143,463 | 306,737 | **277,310** | **75.75%** |
 
-The mint rows use the gas reported for the corresponding isolated Foundry test scenarios. `transferFrom` uses the per-function gas report so the setup mint required by the transfer test is not included in the comparison.
+For the isolated `transferFrom` function reported by Foundry's gas report:
 
-The result becomes increasingly significant as more tokens are minted in one transaction: in this controlled benchmark, removing enumerable bookkeeping reduces the 10-token mint scenario by **71.84%**.
+| Operation | OZ Enumerable | OZ Sequential | Historical ERC721S | ERC721S reduction vs Enumerable |
+| --- | ---: | ---: | ---: | ---: |
+| `transferFrom` | 65,540 | 57,381 | **39,029** | **40.45%** |
 
-These numbers measure the isolated OpenZeppelin enumerable-storage overhead comparison. They do **not yet** measure the complete gas savings of my original `ERC721S` / `ERC721SE` implementation.
+Deployment also becomes smaller:
 
-## Why `ERC721Enumerable` costs more
+| Contract | Deployment gas | Bytecode size |
+| --- | ---: | ---: |
+| OZ Enumerable | 1,445,971 | 6,605 bytes |
+| OZ Sequential | 1,220,918 | 5,563 bytes |
+| Historical ERC721S | **1,024,755** | **4,531 bytes** |
 
-Enumeration is not free. An enumerable implementation must maintain additional state so contracts can answer questions such as which token exists at a global index or which token belongs to an owner at a particular index.
+That is a **29.13% reduction in deployment gas** versus the enumerable baseline.
 
-Those conveniences require additional storage bookkeeping during state-changing operations such as minting and transferring.
+### What the benchmark shows
 
-When token IDs are sequential and the application does not require those enumeration structures to be maintained on every write, some information can instead be derived from the token sequence or computed when queried. The trade-off is straightforward:
+The conservative OpenZeppelin sequential control already demonstrates that removing enumerable bookkeeping produces a large improvement for batch minting. The historical architecture goes further.
 
-> **Reduce expensive state-changing storage operations, accept more expensive or less convenient enumeration reads.**
+Compared with the enumerable baseline, the reconstructed 2021 ownership model uses approximately:
 
-For high-volume NFT minting in 2021, that trade-off could materially affect transaction costs.
+- **49.84% less gas** for a 1-token mint;
+- **72.99% less gas** for a 5-token mint;
+- **75.75% less gas** for a 10-token mint;
+- **40.45% less gas** for `transferFrom`;
+- **29.13% less gas** to deploy the benchmark contract.
+
+It also outperforms the conservative non-enumerable OpenZeppelin control in these scenarios. For example, the historical implementation reduces the 1-token mint by another **29.25%** relative to that control.
+
+## Why the architecture saves gas
+
+Traditional enumerable ERC-721 implementations maintain additional on-chain structures so contracts can cheaply answer questions such as which token belongs to an owner at a given index or which token exists at a global index.
+
+The 2021 sequential architecture makes a different trade-off. Token IDs are implicit in the position of an ownership array:
+
+```solidity
+uint256 tokenId = _owners.length;
+_owners.push(to);
+```
+
+That means minting does not need to update a separate token-ID counter, owner balance mapping, per-owner token list, global token list, and their associated index mappings in the same way as the enumerable baseline.
+
+Enumeration remains available, but is calculated by scanning ownership at read time.
+
+> **The design moves work away from expensive state-changing storage writes and toward read-time computation.**
+
+That trade-off was particularly relevant for NFT drops, where users directly paid the transaction cost of minting.
+
+## Methodology and limitations
+
+This is a controlled architecture benchmark, not a claim that every real-world NFT transaction would be 75.75% cheaper.
+
+Both baselines and the historical implementation are tested with deliberately minimal mint logic. Whitelists, royalties, payment handling, metadata, reveal mechanics, and other project-specific behavior are excluded.
+
+`HistoricalERC721S` is a minimal reconstruction of the ownership/enumeration architecture from the verified production source, not a byte-for-byte copy of the entire deployed Oddies Club contract. This makes the comparison narrower and avoids attributing unrelated application logic to the storage optimization.
+
+Gas figures can also vary with EVM/toolchain changes, so results should be reproduced with the pinned environment when comparing numbers.
 
 ## Historical context
 
 This benchmark was inspired by my 2021 work on a gas-optimized sequential ERC-721 implementation deployed on Ethereum Mainnet.
 
-[Verified production contract on Etherscan](https://etherscan.io/address/0xbbc93a41f78a11d0779171f270fc86ee8efb3765#code)
+[Verified 2021 production contract on Etherscan](https://etherscan.io/address/0xbbc93a41f78a11d0779171f270fc86ee8efb3765#code)
 
-The production implementation and this benchmark are not presented as identical contracts. The benchmark starts with a deliberately narrow comparison so individual sources of gas savings can be measured rather than attributing unrelated contract differences to the sequential architecture.
-
-## Next step
-
-The next benchmark stage will add a faithful minimal reproduction of the original `ERC721S` / `ERC721SE` ownership model and compare it against both OpenZeppelin baselines.
-
-That will separate two questions:
-
-1. How much gas does removing `ERC721Enumerable` bookkeeping save?
-2. How much additional gas did the original sequential ownership architecture save?
+The verified production source preserves the historical implementation and attribution. This repository exists to make the architectural trade-off easier to inspect and reproduce under controlled conditions.
 
 ## License
 
