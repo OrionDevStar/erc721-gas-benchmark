@@ -3,6 +3,7 @@ pragma solidity 0.8.10;
 
 import "../src/OZEnumerableNFT.sol";
 import "../src/OZSequentialNFT.sol";
+import "../src/HistoricalERC721S.sol";
 
 /// @notice Benchmark scenarios intentionally contain only one measured action
 /// per test so `forge test --gas-report` produces easy-to-compare results.
@@ -12,35 +13,25 @@ contract GasBenchmarkTest {
 
     OZEnumerableNFT internal enumerable;
     OZSequentialNFT internal sequential;
+    HistoricalERC721S internal historical;
 
     function setUp() public {
         enumerable = new OZEnumerableNFT();
         sequential = new OZSequentialNFT();
+        historical = new HistoricalERC721S();
     }
 
-    function testEnumerableMint1() public {
-        enumerable.mint(RECIPIENT, 1);
-    }
+    function testEnumerableMint1() public { enumerable.mint(RECIPIENT, 1); }
+    function testSequentialMint1() public { sequential.mint(RECIPIENT, 1); }
+    function testHistoricalMint1() public { historical.mint(RECIPIENT, 1); }
 
-    function testSequentialMint1() public {
-        sequential.mint(RECIPIENT, 1);
-    }
+    function testEnumerableMint5() public { enumerable.mint(RECIPIENT, 5); }
+    function testSequentialMint5() public { sequential.mint(RECIPIENT, 5); }
+    function testHistoricalMint5() public { historical.mint(RECIPIENT, 5); }
 
-    function testEnumerableMint5() public {
-        enumerable.mint(RECIPIENT, 5);
-    }
-
-    function testSequentialMint5() public {
-        sequential.mint(RECIPIENT, 5);
-    }
-
-    function testEnumerableMint10() public {
-        enumerable.mint(RECIPIENT, 10);
-    }
-
-    function testSequentialMint10() public {
-        sequential.mint(RECIPIENT, 10);
-    }
+    function testEnumerableMint10() public { enumerable.mint(RECIPIENT, 10); }
+    function testSequentialMint10() public { sequential.mint(RECIPIENT, 10); }
+    function testHistoricalMint10() public { historical.mint(RECIPIENT, 10); }
 
     function testEnumerableTransfer() public {
         enumerable.mint(address(this), 1);
@@ -50,6 +41,11 @@ contract GasBenchmarkTest {
     function testSequentialTransfer() public {
         sequential.mint(address(this), 1);
         sequential.transferFrom(address(this), SECOND_RECIPIENT, 0);
+    }
+
+    function testHistoricalTransfer() public {
+        historical.mint(address(this), 1);
+        historical.transferFrom(address(this), SECOND_RECIPIENT, 0);
     }
 
     // Required because _safeMint checks ERC721Receiver when minting to this contract.
