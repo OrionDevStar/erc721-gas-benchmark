@@ -53,16 +53,20 @@ The test suite deliberately keeps business logic out of both contracts. There is
 
 ## Results
 
-Results will be added here after running the benchmark with the pinned OpenZeppelin version.
+Initial Foundry benchmark results:
 
 | Operation | OZ ERC721Enumerable | Sequential ERC721 | Gas saved | Reduction |
 | --- | ---: | ---: | ---: | ---: |
-| Mint 1 | TBD | TBD | TBD | TBD |
-| Mint 5 | TBD | TBD | TBD | TBD |
-| Mint 10 | TBD | TBD | TBD | TBD |
-| Transfer 1 | TBD | TBD | TBD | TBD |
+| Mint 1 | 130,542 | 98,711 | 31,831 | **24.38%** |
+| Mint 5 | 590,217 | 200,626 | 389,591 | **66.01%** |
+| Mint 10 | 1,164,790 | 327,986 | 836,804 | **71.84%** |
+| `transferFrom` | 65,540 | 57,381 | 8,159 | **12.45%** |
 
-No percentage will be published until it is produced by the reproducible benchmark.
+The mint rows use the gas reported for the corresponding isolated Foundry test scenarios. `transferFrom` uses the per-function gas report so the setup mint required by the transfer test is not included in the comparison.
+
+The result becomes increasingly significant as more tokens are minted in one transaction: in this controlled benchmark, removing enumerable bookkeeping reduces the 10-token mint scenario by **71.84%**.
+
+These numbers measure the isolated OpenZeppelin enumerable-storage overhead comparison. They do **not yet** measure the complete gas savings of my original `ERC721S` / `ERC721SE` implementation.
 
 ## Why `ERC721Enumerable` costs more
 
